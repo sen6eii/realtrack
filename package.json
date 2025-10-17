@@ -1,0 +1,60 @@
+{
+  "name": "realtrack",
+  "version": "1.0.0",
+  "description": "Real-time delivery tracking platform for businesses and customers",
+  "private": true,
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:business": "npm run dev --workspace=realtrack-business-portal",
+    "dev:customer": "npm run dev --workspace=realtrack-customer-tracking",
+    "dev:all": "concurrently \"npm run dev:business\" \"npm run dev:customer\"",
+    "build:business": "npm run build --workspace=realtrack-business-portal",
+    "build:customer": "npm run build --workspace=realtrack-customer-tracking",
+    "build:all": "npm run build:business && npm run build:customer",
+    "start:business": "npm run start --workspace=realtrack-business-portal",
+    "start:customer": "npm run start --workspace=realtrack-customer-tracking",
+    "lint": "npm run lint --workspaces",
+    "type-check": "npm run type-check --workspaces",
+    "test": "npm run test --workspaces",
+    "clean": "npm run clean --workspaces && rm -rf node_modules",
+    "db:start": "docker-compose up -d",
+    "db:stop": "docker-compose down",
+    "db:reset": "docker-compose down -v && docker-compose up -d",
+    "db:logs": "docker-compose logs -f",
+    "setup": "npm install && npm run build:types && npm run db:start",
+    "setup:dev": "cp .env.example .env && npm run setup"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2",
+    "@types/node": "^20.8.0",
+    "typescript": "^5.2.2"
+  },
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
+  "keywords": [
+    "delivery",
+    "tracking",
+    "real-time",
+    "logistics",
+    "supabase",
+    "nextjs",
+    "flutter",
+    "saas",
+    "multi-tenant"
+  ],
+  "author": "RealTrack Team",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/sen6eii/realtrack.git"
+  },
+  "bugs": {
+    "url": "https://github.com/sen6eii/realtrack/issues"
+  },
+  "homepage": "https://github.com/sen6eii/realtrack#readme"
+}

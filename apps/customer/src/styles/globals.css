@@ -1,0 +1,107 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+@layer base {
+  html {
+    font-family: 'Inter', ui-sans-serif, system-ui;
+  }
+  
+  body {
+    @apply bg-gray-50 text-gray-900 antialiased;
+  }
+}
+
+@layer components {
+  .status-badge {
+    @apply inline-flex items-center px-3 py-1 rounded-full text-sm font-medium;
+  }
+  
+  .status-pending {
+    @apply status-badge bg-yellow-100 text-yellow-800;
+  }
+  
+  .status-assigned {
+    @apply status-badge bg-blue-100 text-blue-800;
+  }
+  
+  .status-on-route {
+    @apply status-badge bg-purple-100 text-purple-800 animate-pulse-slow;
+  }
+  
+  .status-delivered {
+    @apply status-badge bg-green-100 text-green-800;
+  }
+  
+  .status-cancelled {
+    @apply status-badge bg-red-100 text-red-800;
+  }
+  
+  .tracking-step {
+    @apply flex items-start space-x-3 relative;
+  }
+  
+  .tracking-step::before {
+    content: '';
+    @apply absolute left-4 top-8 w-0.5 h-full bg-gray-200;
+  }
+  
+  .tracking-step:last-child::before {
+    content: none;
+  }
+  
+  .tracking-dot {
+    @apply w-8 h-8 rounded-full border-2 border-white shadow-sm flex items-center justify-center z-10 relative;
+  }
+  
+  .tracking-dot.active {
+    @apply bg-primary-600 border-primary-600 text-white;
+  }
+  
+  .tracking-dot.completed {
+    @apply bg-green-500 border-green-500 text-white;
+  }
+  
+  .tracking-dot.pending {
+    @apply bg-gray-300 border-gray-300 text-gray-500;
+  }
+  
+  .map-container {
+    @apply w-full h-full min-h-[400px] rounded-lg overflow-hidden shadow-inner;
+  }
+  
+  .pulse-marker {
+    @apply absolute inset-0 bg-primary-600 rounded-full opacity-75 animate-ping;
+  }
+  
+  .pulse-marker-slow {
+    animation: ping 2s cubic-bezier(0, 0, 0.2, 1) infinite;
+  }
+  
+  @keyframes ping {
+    75%, 100% {
+      transform: scale(2);
+      opacity: 0;
+    }
+  }
+}
+
+@layer utilities {
+  .glass-effect {
+    @apply bg-white/80 backdrop-blur-sm border border-white/20;
+  }
+  
+  .skeleton {
+    @apply animate-pulse bg-gray-200 rounded;
+  }
+  
+  .skeleton-text {
+    @apply skeleton h-4 w-full mb-2;
+  }
+  
+  .skeleton-title {
+    @apply skeleton h-6 w-3/4 mb-4;
+  }
+}

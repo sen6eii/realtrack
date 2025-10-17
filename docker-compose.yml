@@ -1,0 +1,169 @@
+version: '3.8'
+
+services:
+  # RealTrack Database Schema
+  db:
+    image: supabase/postgres:15.1.0.88
+    container_name: realtrack-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_PORT: 5432
+    ports:
+      - "54322:5432"
+    volumes:
+      - ./supabase/schema.sql:/docker-entrypoint-initdb.d/1-schema.sql
+      - ./supabase/rls.sql:/docker-entrypoint-initdb.d/2-rls.sql
+      - ./supabase/functions.sql:/docker-entrypoint-initdb.d/3-functions.sql
+      - ./supabase/seed.sql:/docker-entrypoint-initdb.d/4-seed.sql
+    networks:
+      - realtrack-network
+
+  # Supabase Studio (Development Dashboard)
+  studio:
+    image: supabase/studio:20231107-58e78e2
+    container_name: realtrack-studio
+    restart: unless-stopped
+    environment:
+      SUPABASE_URL: http://kong:8000
+      SUPABASE_REST_URL: http://kong:8000/rest/v1/
+      SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
+      SUPABASE_SERVICE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU
+    ports:
+      - "3000:3000"
+    depends_on:
+      - kong
+    networks:
+      - realtrack-network
+
+  # Kong API Gateway
+  kong:
+    image: kong:3.4
+    container_name: realtrack-kong
+    restart: unless-stopped
+    environment:
+      KONG_DATABASE: "off"
+      KONG_DECLARATIVE_CONFIG: /kong/declarative/kong.yml
+      KONG_PROXY_ACCESS_LOG: /dev/stdout
+      KONG_ADMIN_ACCESS_LOG: /dev/stdout
+      KONG_PROXY_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_ERROR_LOG: /dev/stderr
+      KONG_ADMIN_LISTEN: 0.0.0.0:8001
+      KONG_ADMIN_GUI_URL: http://localhost:8002
+    ports:
+      - "8000:8000"
+      - "8001:8001"
+      - "8002:8002"
+    volumes:
+      - ./supabase/kong.yml:/kong/declarative/kong.yml
+    depends_on:
+      - db
+      - auth
+      - rest
+      - realtime
+      - storage
+    networks:
+      - realtrack-network
+
+  # Supabase Auth
+  auth:
+    image: supabase/gotrue:v2.78.3
+    container_name: realtrack-auth
+    restart: unless-stopped
+    environment:
+      GOTRUE_API_HOST: 0.0.0.0
+      GOTRUE_API_PORT: 9999
+      GOTRUE_DB_DRIVER: postgres
+      GOTRUE_DB_DATABASE_URL: postgresql://postgres:postgres@db:5432/postgres
+      GOTRUE_SITE_URL: http://localhost:3000
+      GOTRUE_URI_ALLOW_LIST: "*"
+      GOTRUE_DISABLE_SIGNUP: false
+      GOTRUE_JWT_SECRET: your-super-secret-jwt-token-with-at-least-32-characters-long
+      GOTRUE_JWT_EXP: 3600
+      GOTRUE_JWT_DEFAULT_GROUP_NAME: authenticated
+      GOTRUE_EXTERNAL_EMAIL_ENABLED: true
+      GOTRUE_EXTERNAL_GOOGLE_ENABLED: false
+      GOTRUE_EXTERNAL_GOOGLE_CLIENT_ID: ""
+      GOTRUE_EXTERNAL_GOOGLE_CLIENT_SECRET: ""
+      GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI: http://localhost:3000/auth/callback
+    ports:
+      - "9999:9999"
+    depends_on:
+      - db
+    networks:
+      - realtrack-network
+
+  # Supabase REST API
+  rest:
+    image: postgrest/postgrest:v12.0.1
+    container_name: realtrack-rest
+    restart: unless-stopped
+    environment:
+      PGRST_DB_URI: postgresql://postgres:postgres@db:5432/postgres
+      PGRST_DB_SCHEMAS: public, storage, graphql_public
+      PGRST_DB_ANON_ROLE: anon
+      PGRST_JWT_SECRET: your-super-secret-jwt-token-with-at-least-32-characters-long
+      PGRST_DB_USE_LEGACY_GUCS: "false"
+    depends_on:
+      - db
+    networks:
+      - realtrack-network
+
+  # Supabase Realtime
+  realtime:
+    image: supabase/realtime:v2.25.73
+    container_name: realtrack-realtime
+    restart: unless-stopped
+    environment:
+      PORT: 4000
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_USER: postgres
+      DB_PASSWORD: postgres
+      DB_NAME: postgres
+      DB_AFTER_CONNECT_QUERY: 'SET search_path TO _realtime'
+      DB_ENC_KEY: supabaserealtime
+      API_JWT_SECRET: your-super-secret-jwt-token-with-at-least-32-characters-long
+      FLY_ALLOC_ID: fly123
+      FLY_APP_NAME: realtime
+      FLY_REGION: iad
+      SECRET_KEY_BASE: UpNVntn3cDxHJpq99YMc1T1AacWPCYMqpc3liE1d5PqH5vqkAnR9QbPG1yCfNnH3
+      ERL_AFLAGS: -proto_dist inet_tcp
+    ports:
+      - "4000:4000"
+    depends_on:
+      - db
+    networks:
+      - realtrack-network
+
+  # Supabase Storage
+  storage:
+    image: supabase/storage-api:v0.51.0
+    container_name: realtrack-storage
+    restart: unless-stopped
+    environment:
+      ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6ImFub24iLCJleHAiOjE5ODM4MTI5OTZ9.CRXP1A7WOeoJeXxjNni43kdQwgnWNReilDMblYTn_I0
+      SERVICE_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZS1kZW1vIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImV4cCI6MTk4MzgxMjk5Nn0.EGIM96RAZx35lJzdJsyH-qQwv8Hdp7fsn3W0YpN81IU
+      POSTGREST_URL: http://rest:3000
+      PGRST_JWT_SECRET: your-super-secret-jwt-token-with-at-least-32-characters-long
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/postgres
+      FILE_SIZE_LIMIT: 52428800
+      REGION: us-east-1
+      GLOBAL_S3_BUCKET: storage
+      ENABLE_IMAGE_TRANSFORMATION: "true"
+      IMAGE_TRANSFORMATION_API_KEY: i_am_not_a_secret
+    depends_on:
+      - db
+      - rest
+    networks:
+      - realtrack-network
+
+networks:
+  realtrack-network:
+    driver: bridge
+
+volumes:
+  db_data:
+    driver: local
