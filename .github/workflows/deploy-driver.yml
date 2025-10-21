@@ -1,0 +1,411 @@
+name: Build and Deploy Driver App
+
+on:
+  push:
+    branches: [main, develop]
+    paths: ['apps/driver/**', 'packages/types/**']
+  pull_request:
+    branches: [main]
+    paths: ['apps/driver/**', 'packages/types/**']
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: 'Release type'
+        required: true
+        default: 'testing'
+        type: choice
+        options:
+          - testing
+          - beta
+          - production
+
+env:
+  FLUTTER_VERSION: '3.24.5'
+  JAVA_VERSION: '11'
+
+jobs:
+  test:
+    name: Test Driver App
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+          cache-key: 'flutter-'
+
+      - name: Get Flutter dependencies
+        run: |
+          cd apps/driver
+          flutter pub get
+
+      - name: Analyze code
+        run: |
+          cd apps/driver
+          flutter analyze --fatal-infos
+
+      - name: Run tests
+        run: |
+          cd apps/driver
+          flutter test --coverage --reporter=expanded
+
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
+        with:
+          file: apps/driver/coverage/lcov.info
+          flags: driver-app
+
+  build-android:
+    name: Build Android App
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+
+      - name: Get Flutter dependencies
+        run: |
+          cd apps/driver
+          flutter pub get
+
+      - name: Create keystore.properties
+        run: |
+          cd apps/driver/android
+          echo "storeFile=${{ secrets.ANDROID_KEYSTORE_PATH }}" > keystore.properties
+          echo "storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" >> keystore.properties
+          echo "keyAlias=${{ secrets.ANDROID_KEY_ALIAS }}" >> keystore.properties
+          echo "keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}" >> keystore.properties
+
+      - name: Create signing key
+        run: |
+          cd apps/driver/android/app
+          echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > release-key.keystore
+
+      - name: Build APK
+        run: |
+          cd apps/driver
+          flutter build apk --release --obfuscate --split-debug-info=build/debug-info/
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+
+      - name: Build AAB
+        run: |
+          cd apps/driver
+          flutter build appbundle --release --obfuscate --split-debug-info=build/debug-info/
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+
+      - name: Upload APK artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: android-apks
+          path: apps/driver/build/app/outputs/flutter-apk/app-release-*.apk
+          retention-days: 30
+
+      - name: Upload AAB artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: android-aab
+          path: apps/driver/build/app/outputs/bundle/release/app-release.aab
+          retention-days: 30
+
+  build-ios:
+    name: Build iOS App
+    runs-on: macos-latest
+    needs: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+          cache: true
+
+      - name: Get Flutter dependencies
+        run: |
+          cd apps/driver
+          flutter pub get
+
+      - name: Install CocoaPods
+        run: |
+          cd apps/driver/ios
+          pod install
+
+      - name: Build iOS (No Codesign)
+        run: |
+          cd apps/driver
+          flutter build ios --release --no-codesign --obfuscate --split-debug-info=build/debug-info/
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+
+      - name: Upload iOS artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: ios-build
+          path: apps/driver/build/ios/iphoneos/Runner.app
+          retention-days: 30
+
+  security-scan:
+    name: Security Scan
+    runs-on: ubuntu-latest
+    needs: test
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+
+      - name: Get Flutter dependencies
+        run: |
+          cd apps/driver
+          flutter pub get
+
+      - name: Run security scan
+        run: |
+          cd apps/driver
+          flutter pub audit --style=tree
+
+      - name: Run dependency scan
+        uses: snyk/actions/golang@master
+        continue-on-error: true
+        with:
+          command: monitor
+          args: --org=realtrack --project-id=driver-app
+        env:
+          SNYK_TOKEN: ${{ secrets.SNYK_TOKEN }}
+
+  deploy-testing:
+    name: Deploy to Testing
+    runs-on: ubuntu-latest
+    needs: [build-android, security-scan]
+    if: github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch'
+    environment: testing
+    
+    steps:
+      - name: Download Android APK
+        uses: actions/download-artifact@v3
+        with:
+          name: android-apks
+          path: apps/driver/build/apks/
+
+      - name: Deploy to Firebase App Distribution
+        uses: wzieba/Firebase-Distribution-Github-Action@v1
+        with:
+          appId: ${{ secrets.FIREBASE_ANDROID_APP_ID }}
+          serviceCredentialsFileContent: ${{ secrets.FIREBASE_SERVICE_ACCOUNT }}
+          groups: testing-team
+          file: apps/driver/build/apks/app-release-arm64-v8a.apk
+          releaseNotes: |
+            Build: ${{ github.sha }}
+            Branch: ${{ github.ref_name }}
+            Commit: ${{ github.event.head_commit.message }}
+
+      - name: Notify Slack
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          channel: '#mobile-testing'
+          text: '🚗 New Driver App build available for testing!'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  deploy-google-play:
+    name: Deploy to Google Play Store
+    runs-on: ubuntu-latest
+    needs: [build-android, security-scan]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    
+    steps:
+      - name: Download Android AAB
+        uses: actions/download-artifact@v3
+        with:
+          name: android-aab
+          path: apps/driver/build/bundle/
+
+      - name: Deploy to Google Play Internal Testing
+        uses: r0adkll/upload-google-play@v1
+        with:
+          serviceAccountJsonPlainText: ${{ secrets.GOOGLE_PLAY_SERVICE_ACCOUNT }}
+          packageName: com.realtrack.driver
+          releaseFiles: apps/driver/build/bundle/app-release.aab
+          track: internal
+          status: completed
+          whatsNewDirectory: apps/driver/fastlane/metadata/android
+          mappingFile: apps/driver/build/debug-info/obfuscation.txt
+
+  deploy-app-store:
+    name: Deploy to Apple App Store
+    runs-on: macos-latest
+    needs: [build-ios, security-scan]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: 'stable'
+
+      - name: Setup Fastlane
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: '3.0'
+          working-directory: apps/driver/ios
+
+      - name: Get Flutter dependencies
+        run: |
+          cd apps/driver
+          flutter pub get
+
+      - name: Install Fastlane dependencies
+        run: |
+          cd apps/driver/ios
+          bundle install
+
+      - name: Build and upload to App Store Connect
+        run: |
+          cd apps/driver/ios
+          fastlane beta
+        env:
+          FASTLANE_USER: ${{ secrets.APPLE_ID }}
+          FASTLANE_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          FASTLANE_APPLE_APPLICATION_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          APPLE_KEY_ID: ${{ secrets.APPLE_KEY_ID }}
+          APPLE_ISSUER_ID: ${{ secrets.APPLE_ISSUER_ID }}
+          APPLE_SIGNING_KEY: ${{ secrets.APPLE_SIGNING_KEY }}
+
+  create-release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    needs: [deploy-google-play, deploy-app-store]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download Android APK
+        uses: actions/download-artifact@v3
+        with:
+          name: android-apks
+          path: release/
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Generate changelog from git commits since last release
+          PREV_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || echo "")
+          if [ -n "$PREV_TAG" ]; then
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" $PREV_TAG..HEAD)
+          else
+            CHANGELOG=$(git log --pretty=format:"- %s (%h)" -10)
+          fi
+          echo "changelog<<EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "EOF" >> $GITHUB_OUTPUT
+
+      - name: Create Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ github.run_number }}
+          release_name: Driver App v${{ github.run_number }}
+          body: |
+            ## 🚗 RealTrack Driver App Release v${{ github.run_number }}
+            
+            ### 📱 What's New
+            ${{ steps.changelog.outputs.changelog }}
+            
+            ### 📥 Download
+            - **Android**: Available on Google Play Store
+            - **iOS**: Available on App Store
+            
+            ### 🔗 Links
+            - Business Portal: ${{ secrets.PRODUCTION_BUSINESS_URL }}
+            - Customer Tracking: ${{ secrets.PRODUCTION_CUSTOMER_URL }}
+          draft: false
+          prerelease: false
+
+      - name: Upload release assets
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          asset_path: release/app-release-arm64-v8a.apk
+          asset_name: realtrack-driver-v${{ github.run_number }}.apk
+          asset_content_type: application/vnd.android.package-archive
+
+  notify:
+    name: Notify Deployment
+    runs-on: ubuntu-latest
+    needs: [deploy-testing, deploy-google-play, deploy-app-store]
+    if: always() && (needs.deploy-testing.result == 'success' || needs.deploy-google-play.result == 'success' || needs.deploy-app-store.result == 'success')
+    
+    steps:
+      - name: Notify Slack on Success
+        if: needs.deploy-google-play.result == 'success' || needs.deploy-app-store.result == 'success'
+        uses: 8398a7/action-slack@v3
+        with:
+          status: success
+          channel: '#deployments'
+          text: '🚗 Driver App released successfully!'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+      - name: Notify Slack on Failure
+        if: failure()
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: '#deployments'
+          text: '❌ Driver App deployment failed!'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}

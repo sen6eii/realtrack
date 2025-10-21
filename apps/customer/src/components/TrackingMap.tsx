@@ -8,20 +8,35 @@ interface MapProps {
   accessToken: string
   deliveryLocation?: { lat: number; lng: number } | null
   driverLocation?: { lat: number; lng: number } | null
+  driverInfo?: {
+    name: string
+    vehicleType: string
+    licensePlate: string
+    phone: string
+    rating: number
+    status: string
+  }
   route?: Array<{ lat: number; lng: number }>
+  eta?: string
+  distanceRemaining?: number
   height?: string
   showTraffic?: boolean
   interactive?: boolean
+  realTimeUpdates?: boolean
 }
 
 export function TrackingMap({
   accessToken,
   deliveryLocation,
   driverLocation,
+  driverInfo,
   route = [],
+  eta,
+  distanceRemaining,
   height = '400px',
   showTraffic = false,
   interactive = true,
+  realTimeUpdates = true,
 }: MapProps) {
   const mapContainer = useRef<HTMLDivElement>(null)
   const map = useRef<mapboxgl.Map | null>(null)
@@ -84,14 +99,25 @@ export function TrackingMap({
       bounds.extend([deliveryLocation.lng, deliveryLocation.lat])
     }
 
-    // Add driver location marker with animation
+    // Add driver location marker with animation and detailed info
     if (driverLocation) {
       const driverEl = document.createElement('div')
       driverEl.className = 'relative'
+      
+      // Enhanced driver marker with status
+      const statusColor = driverInfo?.status === 'on_route' ? 'blue' : 
+                         driverInfo?.status === 'assigned' ? 'amber' : 'gray'
+      
       driverEl.innerHTML = `
-        <div class="absolute inset-0 bg-blue-500 rounded-full animate-ping"></div>
-        <div class="relative w-8 h-8 bg-blue-600 rounded-full border-4 border-white shadow-lg flex items-center justify-center">
-          <div class="text-white text-sm">🚗</div>
+        <div class="relative">
+          <div class="absolute inset-0 bg-${statusColor}-500 rounded-full animate-ping ${realTimeUpdates ? '' : 'opacity-0'}"></div>
+          <div class="relative w-10 h-10 bg-${statusColor}-600 rounded-full border-4 border-white shadow-lg flex items-center justify-center">
+            <div class="text-white text-sm">
+              ${driverInfo?.vehicleType === 'motorcycle' ? '🏍️' : 
+                driverInfo?.vehicleType === 'bicycle' ? '🚴' : '🚗'}
+            </div>
+          </div>
+          ${realTimeUpdates ? '<div class="absolute -top-1 -right-1 w-3 h-3 bg-green-500 rounded-full border-2 border-white animate-pulse"></div>' : ''}
         </div>
       `
 
@@ -99,14 +125,66 @@ export function TrackingMap({
         .setLngLat([driverLocation.lng, driverLocation.lat])
         .addTo(map.current!)
 
-      // Add popup for driver location
-      const popup = new mapboxgl.Popup({ offset: 25 }).setHTML(`
+      // Enhanced popup with driver information
+      const popupContent = driverInfo ? `
+        <div class="p-3 min-w-64">
+          <div class="flex items-center justify-between mb-2">
+            <div class="font-semibold text-gray-900">${driverInfo.name}</div>
+            <div class="flex items-center text-sm">
+              <span class="text-yellow-500">⭐</span>
+              <span class="ml-1 text-gray-600">${driverInfo.rating}</span>
+            </div>
+          </div>
+          <div class="space-y-1 text-sm">
+            <div class="flex justify-between">
+              <span class="text-gray-600">Vehicle:</span>
+              <span class="capitalize">${driverInfo.vehicleType}</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-600">License:</span>
+              <span class="font-mono">${driverInfo.licensePlate}</span>
+            </div>
+            <div class="flex justify-between">
+              <span class="text-gray-600">Status:</span>
+              <span class="capitalize text-${statusColor}-600 font-medium">${driverInfo.status.replace('_', ' ')}</span>
+            </div>
+            ${eta ? `
+            <div class="flex justify-between">
+              <span class="text-gray-600">ETA:</span>
+              <span class="font-medium text-green-600">${eta}</span>
+            </div>
+            ` : ''}
+            ${distanceRemaining ? `
+            <div class="flex justify-between">
+              <span class="text-gray-600">Distance:</span>
+              <span class="font-medium">${distanceRemaining.toFixed(1)} km</span>
+            </div>
+            ` : ''}
+          </div>
+          ${driverInfo.phone ? `
+          <div class="mt-3 pt-3 border-t border-gray-200">
+            <a href="tel:${driverInfo.phone}" class="flex items-center justify-center w-full bg-blue-500 text-white px-3 py-2 rounded-lg hover:bg-blue-600 transition-colors">
+              <span class="mr-2">📞</span>
+              Call Driver
+            </a>
+          </div>
+          ` : ''}
+          ${realTimeUpdates ? '<div class="text-xs text-green-600 text-center mt-2">🔴 Live tracking active</div>' : ''}
+        </div>
+      ` : `
         <div class="p-2 text-center">
           <div class="font-medium">Driver Location</div>
           <div class="text-sm text-gray-600">Your driver is currently here</div>
           <div class="text-xs text-blue-600 mt-1">Live tracking</div>
         </div>
-      `)
+      `
+      
+      const popup = new mapboxgl.Popup({ 
+        offset: 25,
+        closeButton: true,
+        maxWidth: '300px'
+      }).setHTML(popupContent)
+      
       driverMarker.setPopup(popup)
 
       markersRef.current.push(driverMarker)

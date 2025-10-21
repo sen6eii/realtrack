@@ -435,3 +435,167 @@ export interface DeliveryRoutePoint {
   speed?: number
   heading?: number
 }
+
+// Driver-related types
+export interface DriverProfile {
+  id: string
+  driver_id: string
+  profile_image_url?: string
+  rating: number
+  total_ratings: number
+  total_deliveries: number
+  average_delivery_time_minutes?: number
+  on_time_delivery_rate: number
+  preferred_delivery_areas: string[]
+  max_deliveries_per_day: number
+  work_schedule?: Record<string, [string, string]>
+  emergency_contact_name?: string
+  emergency_contact_phone?: string
+  bank_account_details?: Record<string, any>
+  vehicle_details?: VehicleDetails
+  driver_licenses?: Record<string, any>
+  insurance_details?: Record<string, any>
+  background_check_status: 'pending' | 'approved' | 'rejected'
+  background_check_date?: string
+  training_completed: boolean
+  training_completion_date?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface VehicleDetails {
+  type: string
+  license_plate: string
+  make?: string
+  model?: string
+  year?: number
+  color?: string
+  [key: string]: any
+}
+
+export interface DriverAvailability {
+  id: string
+  driver_id: string
+  date: string
+  start_time?: string
+  end_time?: string
+  is_available: boolean
+  reason_unavailable?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface DriverEarnings {
+  id: string
+  driver_id: string
+  delivery_id: string
+  base_amount: number
+  tip_amount: number
+  bonus_amount: number
+  total_amount: number
+  currency: string
+  payment_status: 'pending' | 'paid' | 'failed'
+  payment_date?: string
+  created_at: string
+  updated_at: string
+}
+
+export interface DriverPerformanceMetrics {
+  id: string
+  driver_id: string
+  metric_date: string
+  total_deliveries: number
+  completed_deliveries: number
+  cancelled_deliveries: number
+  average_delivery_time_minutes?: number
+  total_distance_km: number
+  total_earnings: number
+  customer_rating?: number
+  on_time_deliveries: number
+  late_deliveries: number
+  created_at: string
+  updated_at: string
+}
+
+export interface DriverRating {
+  id: string
+  driver_id: string
+  delivery_id: string
+  customer_rating: number
+  customer_comment?: string
+  rating_date: string
+  created_at: string
+}
+
+export interface DriverNotification {
+  id: string
+  driver_id: string
+  title: string
+  message: string
+  notification_type: 'delivery_assigned' | 'delivery_update' | 'payment' | 'system' | 'promotion'
+  is_read: boolean
+  data?: Record<string, any>
+  created_at: string
+}
+
+export interface EnhancedLocationUpdate extends LocationUpdate {
+  battery_level?: number
+  location_accuracy?: number
+  altitude?: number
+  activity_type?: string
+}
+
+export interface DriverComprehensiveStats {
+  total_deliveries: number
+  completed_deliveries: number
+  cancelled_deliveries: number
+  average_delivery_time_minutes: number
+  total_distance_km: number
+  total_earnings: number
+  customer_rating: number
+  on_time_delivery_rate: number
+  active_days: number
+}
+
+export interface NearbyDriver {
+  driver_id: string
+  driver_name: string
+  driver_phone?: string
+  vehicle_type?: string
+  rating: number
+  distance_km: number
+  last_location_update: string
+}
+
+export interface ActiveDriverStatus {
+  driver_id: string
+  driver_name: string
+  driver_phone?: string
+  vehicle_type?: string
+  current_location?: string
+  last_location_update?: string
+  current_delivery_id?: string
+  current_delivery_status?: string
+  deliveries_today: number
+  status: 'available' | 'on_delivery' | 'offline'
+}
+
+export interface DriverEarningsPeriod {
+  period_start: string
+  period_end: string
+  total_deliveries: number
+  total_earnings: number
+  average_per_delivery: number
+  total_tips: number
+  paid_amount: number
+  pending_amount: number
+}
+
+export interface DriverWithProfile extends Driver {
+  profile?: DriverProfile
+  availability?: DriverAvailability[]
+  earnings?: DriverEarnings[]
+  performance_metrics?: DriverPerformanceMetrics[]
+  ratings?: DriverRating[]
+  notifications?: DriverNotification[]
+}

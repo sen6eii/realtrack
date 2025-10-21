@@ -1,0 +1,78 @@
+name: realtrack_driver
+description: RealTrack Driver App - Real-time delivery tracking for drivers
+
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.2
+  
+  # State management
+  flutter_riverpod: ^2.4.9
+  
+  # Supabase
+  supabase_flutter: ^1.10.24
+  
+  # Location services
+  geolocator: ^10.1.0
+  geocoding: ^2.1.1
+  
+  # QR code scanning
+  qr_code_scanner: ^1.0.1
+  
+  # Maps
+  mapbox_gl: ^0.16.0
+  
+  # Permissions
+  permission_handler: ^11.1.0
+  
+  # Local storage
+  shared_preferences: ^2.2.2
+  
+  # HTTP requests
+  http: ^1.1.2
+  
+  # JSON serialization
+  json_annotation: ^4.8.1
+  
+  # Utilities
+  uuid: ^4.2.1
+  intl: ^0.18.1
+  
+  # Background location
+  background_fetch: ^1.2.1
+  
+  # UI components
+  flutter_svg: ^2.0.9
+  cached_network_image: ^3.3.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  build_runner: ^2.4.7
+  json_serializable: ^6.7.1
+
+flutter:
+  uses-material-design: true
+  
+  assets:
+    - assets/images/
+    - assets/icons/
+  
+  fonts:
+    - family: Inter
+      fonts:
+        - asset: assets/fonts/Inter-Regular.ttf
+        - asset: assets/fonts/Inter-Medium.ttf
+          weight: 500
+        - asset: assets/fonts/Inter-SemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/Inter-Bold.ttf
+          weight: 700

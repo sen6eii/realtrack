@@ -1,0 +1,362 @@
+name: Database Migration and Deployment
+
+on:
+  push:
+    branches: [main, develop]
+    paths: ['supabase/**']
+  pull_request:
+    branches: [main]
+    paths: ['supabase/**']
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        required: true
+        default: 'staging'
+        type: choice
+        options:
+          - staging
+          - production
+      migration_type:
+        description: 'Migration type'
+        required: true
+        default: 'full'
+        type: choice
+        options:
+          - full
+          - schema-only
+          - data-only
+
+env:
+  SUPABASE_CLI_VERSION: '1.190.3'
+
+jobs:
+  validate-schema:
+    name: Validate Database Schema
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: ${{ env.SUPABASE_CLI_VERSION }}
+
+      - name: Validate schema syntax
+        run: |
+          cd supabase
+          supabase db lint --schema public
+          supabase test db --schema public
+
+      - name: Check RLS policies
+        run: |
+          cd supabase
+          supabase db diff --use-migra --schema public --file rls-check.sql
+          # Ensure RLS is enabled on all tables
+          if ! grep -q "ALTER TABLE.*ENABLE ROW LEVEL SECURITY" rls-check.sql; then
+            echo "❌ Some tables are missing RLS policies"
+            exit 1
+          fi
+
+      - name: Validate functions
+        run: |
+          cd supabase
+          # Test function syntax
+          for file in functions.sql enhanced_driver_functions.sql; do
+            if [ -f "$file" ]; then
+              echo "Validating $file..."
+              psql --set ON_ERROR_STOP=1 -c "\ir $file" < /dev/null || {
+                echo "❌ Syntax error in $file"
+                exit 1
+              }
+            fi
+          done
+
+  test-migrations:
+    name: Test Database Migrations
+    runs-on: ubuntu-latest
+    needs: validate-schema
+    
+    services:
+      postgres:
+        image: postgres:15
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: realtrack_test
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup PostgreSQL
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y postgresql-client
+
+      - name: Start local Supabase
+        uses: supabase/setup-cli@v1
+        with:
+          version: ${{ env.SUPABASE_CLI_VERSION }}
+
+      - name: Initialize Supabase project
+        run: |
+          cd supabase
+          supabase init
+          supabase start --workdir .
+
+      - name: Run migrations
+        run: |
+          cd supabase
+          supabase db push --workdir .
+
+      - name: Run seed data
+        run: |
+          cd supabase
+          psql "$DATABASE_URL" -f seed.sql
+          psql "$DATABASE_URL" -f enhanced_driver_seed.sql
+
+      - name: Test database connectivity
+        run: |
+          cd supabase
+          supabase db reset --workdir .
+          supabase test db --workdir .
+
+      - name: Cleanup
+        if: always()
+        run: |
+          cd supabase
+          supabase stop --workdir .
+
+  deploy-staging:
+    name: Deploy to Staging
+    runs-on: ubuntu-latest
+    needs: [validate-schema, test-migrations]
+    if: github.ref == 'refs/heads/develop' || github.event_name == 'workflow_dispatch'
+    environment: staging
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: ${{ env.SUPABASE_CLI_VERSION }}
+
+      - name: Link to staging project
+        run: |
+          cd supabase
+          supabase link --project-ref ${{ secrets.STAGING_SUPABASE_PROJECT_ID }}
+
+      - name: Run schema migrations
+        run: |
+          cd supabase
+          supabase db push
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Apply driver schema enhancements
+        run: |
+          cd supabase
+          psql "${{ secrets.STAGING_DATABASE_URL }}" -f driver_schema_migration.sql
+          psql "${{ secrets.STAGING_DATABASE_URL }}" -f enhanced_driver_functions.sql
+          psql "${{ secrets.STAGING_DATABASE_URL }}" -f enhanced_driver_rls.sql
+          psql "${{ secrets.STAGING_DATABASE_URL }}" -f enhanced_driver_seed.sql
+
+      - name: Configure real-time
+        run: |
+          cd supabase
+          psql "${{ secrets.STAGING_DATABASE_URL }}" -f realtime_config.sql
+
+      - name: Run post-deployment checks
+        run: |
+          cd supabase
+          # Check if tables exist
+          psql "${{ secrets.STAGING_DATABASE_URL }}" -c "
+            SELECT table_name 
+            FROM information_schema.tables 
+            WHERE table_schema = 'public' 
+            AND table_name IN ('driver_profiles', 'driver_availability', 'driver_earnings');
+          "
+          
+          # Check if functions exist
+          psql "${{ secrets.STAGING_DATABASE_URL }}" -c "
+            SELECT proname 
+            FROM pg_proc 
+            WHERE proname IN ('upsert_driver_profile', 'get_nearby_available_drivers', 'calculate_eta');
+          "
+
+      - name: Test staging environment
+        run: |
+          # Test database functions
+          curl -X POST "${{ secrets.STAGING_SUPABASE_URL }}/rest/v1/rpc/get_business_analytics" \
+            -H "apikey: ${{ secrets.STAGING_SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.STAGING_SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"p_business_id": "test-business-id"}' || exit 1
+
+  deploy-production:
+    name: Deploy to Production
+    runs-on: ubuntu-latest
+    needs: [validate-schema, test-migrations]
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: ${{ env.SUPABASE_CLI_VERSION }}
+
+      - name: Create backup before deployment
+        run: |
+          cd supabase
+          supabase db dump --data-only --file=backup-$(date +%Y%m%d-%H%M%S).sql
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Link to production project
+        run: |
+          cd supabase
+          supabase link --project-ref ${{ secrets.PRODUCTION_SUPABASE_PROJECT_ID }}
+
+      - name: Run schema migrations with dry-run
+        run: |
+          cd supabase
+          supabase db push --dry-run
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Get approval for production deployment
+        uses: trstringer/manual-approval@v1
+        with:
+          secret: ${{ github.TOKEN }}
+          approvers: team-leads
+          minimum-approvals: 2
+
+      - name: Run production migrations
+        run: |
+          cd supabase
+          supabase db push
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Apply driver enhancements to production
+        run: |
+          cd supabase
+          psql "${{ secrets.PRODUCTION_DATABASE_URL }}" -f driver_schema_migration.sql
+          psql "${{ secrets.PRODUCTION_DATABASE_URL }}" -f enhanced_driver_functions.sql
+          psql "${{ secrets.PRODUCTION_DATABASE_URL }}" -f enhanced_driver_rls.sql
+
+      - name: Configure production real-time
+        run: |
+          cd supabase
+          psql "${{ secrets.PRODUCTION_DATABASE_URL }}" -f realtime_config.sql
+
+      - name: Verify production deployment
+        run: |
+          # Test critical functions
+          curl -X POST "${{ secrets.PRODUCTION_SUPABASE_URL }}/rest/v1/rpc/calculate_eta" \
+            -H "apikey: ${{ secrets.PRODUCTION_SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.PRODUCTION_SUPABASE_ANON_KEY }}" \
+            -H "Content-Type: application/json" \
+            -d '{"p_delivery_id": "test-delivery-id"}'
+
+          # Test real-time subscriptions
+          curl -X POST "${{ secrets.PRODUCTION_SUPABASE_URL }}/rest/v1/realtime/subscribe" \
+            -H "apikey: ${{ secrets.PRODUCTION_SUPABASE_ANON_KEY }}" \
+            -H "Authorization: Bearer ${{ secrets.PRODUCTION_SUPABASE_ANON_KEY }}" \
+            -d '{"event": "*", "schema": "public", "table": "deliveries"}'
+
+      - name: Update production monitoring
+        run: |
+          # Update monitoring dashboards
+          curl -X POST "${{ secrets.MONITORING_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{"event": "database_deployed", "version": "${{ github.sha }}", "environment": "production"}'
+
+  rollback:
+    name: Rollback Production
+    runs-on: ubuntu-latest
+    needs: deploy-production
+    if: failure() && needs.deploy-production.result == 'failure'
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          ref: main~1  # Previous commit
+
+      - name: Setup Supabase CLI
+        uses: supabase/setup-cli@v1
+        with:
+          version: ${{ env.SUPABASE_CLI_VERSION }}
+
+      - name: Link to production project
+        run: |
+          cd supabase
+          supabase link --project-ref ${{ secrets.PRODUCTION_SUPABASE_PROJECT_ID }}
+
+      - name: Rollback database
+        run: |
+          cd supabase
+          supabase db reset --workdir .
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+
+      - name: Notify rollback
+        uses: 8398a7/action-slack@v3
+        with:
+          status: failure
+          channel: '#alerts'
+          text: '🚨 Production database rollback completed!'
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
+  monitor:
+    name: Monitor Database Performance
+    runs-on: ubuntu-latest
+    needs: [deploy-staging, deploy-production]
+    if: always() && (needs.deploy-staging.result == 'success' || needs.deploy-production.result == 'success')
+    
+    steps:
+      - name: Monitor database metrics
+        run: |
+          # Check database performance
+          curl -X GET "${{ secrets.MONITORING_API_URL }}/metrics/database" \
+            -H "Authorization: Bearer ${{ secrets.MONITORING_TOKEN }}"
+
+          # Check for slow queries
+          curl -X GET "${{ secrets.MONITORING_API_URL }}/metrics/slow-queries" \
+            -H "Authorization: Bearer ${{ secrets.MONITORING_TOKEN }}"
+
+      - name: Set up monitoring alerts
+        run: |
+          # Configure alerts for database performance
+          curl -X POST "${{ secrets.MONITORING_WEBHOOK_URL }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "alerts": [
+                {
+                  "name": "High Query Time",
+                  "condition": "query_time > 5000",
+                  "action": "notify_team"
+                },
+                {
+                  "name": "Connection Pool Exhaustion",
+                  "condition": "active_connections > 80",
+                  "action": "auto_scale"
+                }
+              ]
+            }'
