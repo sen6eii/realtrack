@@ -1,0 +1,194 @@
+version: '3.8'
+
+services:
+  # Monitoring & Observability
+  prometheus:
+    image: prom/prometheus:v2.40.0
+    container_name: realtrack-prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--storage.tsdb.retention.time=15d'
+      - '--web.enable-lifecycle'
+    networks:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:9.3.0
+    container_name: realtrack-grafana
+    ports:
+      - "3001:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_DOMAIN=grafana.realtrack.app
+      - GF_SERVER_ROOT_URL=http://grafana.realtrack.app
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards
+    networks:
+      - monitoring
+
+  # Node Exporter for system metrics
+  node-exporter:
+    image: prom/node-exporter:v1.5.0
+    container_name: realtrack-node-exporter
+    ports:
+      - "9100:9100"
+    command:
+      - '--path.rootfs=/host'
+    volumes:
+      - '/:/host:ro,rslave'
+    networks:
+      - monitoring
+
+  # PostgreSQL Exporter for database metrics
+  postgres-exporter:
+    image: prometheuscommunity/postgres-exporter:v0.11.1
+    container_name: realtrack-postgres-exporter
+    ports:
+      - "9187:9187"
+    environment:
+      DATA_SOURCE_NAME: "postgresql://exporter:exporter123@host.docker.internal:5432/realtrack"
+    networks:
+      - monitoring
+
+  # AlertManager
+  alertmanager:
+    image: prom/alertmanager:v0.25.0
+    container_name: realtrack-alertmanager
+    ports:
+      - "9093:9093"
+    volumes:
+      - ./monitoring/alertmanager.yml:/etc/alertmanager/alertmanager.yml
+      - alertmanager_data:/alertmanager
+    networks:
+      - monitoring
+
+  # Redis for caching
+  redis:
+    image: redis:7.0.5-alpine
+    container_name: realtrack-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    networks:
+      - monitoring
+
+  # Redis Exporter
+  redis-exporter:
+    image: oliver006/redis_exporter:v1.43.0
+    container_name: realtrack-redis-exporter
+    ports:
+      - "9121:9121"
+    environment:
+      REDIS_ADDR: redis://redis:6379
+    networks:
+      - monitoring
+
+  # Jaeger for distributed tracing
+  jaeger:
+    image: jaegertracing/all-in-one:1.44
+    container_name: realtrack-jaeger
+    ports:
+      - "16686:16686"
+      - "14268:14268"
+    environment:
+      COLLECTOR_ZIPKIN_HOST_PORT: 9411
+    networks:
+      - monitoring
+
+  # Health Check Service
+  healthcheck:
+    image: nginx:1.23-alpine
+    container_name: realtrack-healthcheck
+    ports:
+      - "8080:80"
+    volumes:
+      - ./monitoring/nginx.conf:/etc/nginx/nginx.conf
+      - ./monitoring/health.html:/usr/share/nginx/html/health.html
+    networks:
+      - monitoring
+
+  # Log Aggregation (Loki)
+  loki:
+    image: grafana/loki:2.8.0
+    container_name: realtrack-loki
+    ports:
+      - "3100:3100"
+    volumes:
+      - ./monitoring/loki.yml:/etc/loki/local-config.yaml
+      - loki_data:/loki
+    command: -config.file=/etc/loki/local-config.yaml
+    networks:
+      - monitoring
+
+  # Nginx for load balancing and SSL termination
+  nginx:
+    image: nginx:1.23-alpine
+    container_name: realtrack-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./monitoring/nginx/prod.conf:/etc/nginx/nginx.conf
+      - ./ssl:/etc/nginx/ssl
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - healthcheck
+    networks:
+      - monitoring
+
+  # Backup Service
+  backup:
+    image: postgres:15-alpine
+    container_name: realtrack-backup
+    volumes:
+      - ./backups:/backups
+      - backup_scripts:/scripts
+    environment:
+      PGPASSWORD: ${POSTGRES_PASSWORD}
+    entrypoint: |
+      sh -c "
+        while true; do
+          echo 'Starting backup at $$(date)'
+          pg_dump -h host.docker.internal -U postgres realtrack > /backups/backup_$$(date +%Y%m%d_%H%M%S).sql
+          echo 'Backup completed at $$(date)'
+          find /backups -name 'backup_*.sql' -mtime +7 -delete
+          sleep 86400
+        done
+      "
+    networks:
+      - monitoring
+
+  # Performance Testing
+  artillery:
+    image: artilleryio/artillery:2.0.0
+    container_name: realtrack-artillery
+    volumes:
+      - ./tests/performance:/tests
+    networks:
+      - monitoring
+
+volumes:
+  prometheus_data:
+  grafana_data:
+  alertmanager_data:
+  redis_data:
+  loki_data:
+  nginx_logs:
+  backup_scripts:
+
+networks:
+  monitoring:
+    driver: bridge

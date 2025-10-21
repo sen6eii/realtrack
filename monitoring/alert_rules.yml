@@ -1,0 +1,274 @@
+groups:
+  - name: alert.rules
+    rules:
+      # Application Alerting
+      - alert: ApplicationDown
+        expr: up{job=~"business-portal|customer-tracking"} == 0
+        for: 1m
+        labels:
+          severity: critical
+          team: engineering
+        annotations:
+          summary: "Application is down"
+          description: "{{ $labels.job }} has been down for more than 1 minute"
+          runbook_url: "https://docs.realtrack.app/runbooks/application-down"
+
+      - alert: HighErrorRate
+        expr: rate(http_requests_total{status=~"5.."}[5m]) > 0.1
+        for: 2m
+        labels:
+          severity: warning
+          team: engineering
+        annotations:
+          summary: "High error rate detected"
+          description: "Error rate is {{ $value }} errors per second"
+
+      - alert: SlowAPIResponse
+        expr: histogram_quantile(0.95, rate(http_request_duration_seconds_bucket[5m])) > 2
+        for: 2m
+        labels:
+          severity: warning
+          team: engineering
+        annotations:
+          summary: "API response time is slow"
+          description: "95th percentile response time is {{ $value }} seconds"
+
+      - alert: DatabaseConnectionsHigh
+        expr: pg_stat_activity_count > 150
+        for: 5m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "High database connection count"
+          description: "Database has {{ $value }} active connections"
+
+      - alert: DatabaseQuerySlow
+        expr: pg_stat_statements_mean_exec_time_ms > 1000
+        for: 2m
+        labels:
+          severity: warning
+          team: database
+        annotations:
+          summary: "Slow database query detected"
+          description: "Average query execution time is {{ $value }}ms"
+
+      - alert: DatabaseDeadlockDetected
+        expr: increase(pg_stat_database_deadlocks[1m]) > 0
+        for: 0m
+        labels:
+          severity: critical
+          team: database
+        annotations:
+          summary: "Database deadlock detected"
+          description: "Database deadlocks are occurring"
+
+      # Real-time System Alerting
+      - alert: RealtimeConnectionsHigh
+        expr: supabase_realtime_connections > 1000
+        for: 2m
+        labels:
+          severity: warning
+          team: realtime
+        annotations:
+          summary: "High number of real-time connections"
+          description: "{{ $value }} real-time connections"
+
+      - alert: WebSocketErrorsHigh
+        expr: rate(websocket_errors_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+          team: realtime
+        annotations:
+          summary: "High WebSocket error rate"
+          description: "{{ $value }} WebSocket errors per second"
+
+      # Mobile Application Alerting
+      - alert: MobileAppCrashRateHigh
+        expr: rate(mobile_app_crashes_total[5m]) > 0.01
+        for: 2m
+        labels:
+          severity: critical
+          team: mobile
+        annotations:
+          summary: "High mobile app crash rate"
+          description: "Mobile app crash rate is {{ $value }} per user per minute"
+
+      - alert: MobileAppANRHigh
+        expr: rate(mobile_app_anr_total[5m]) > 0.05
+        for: 2m
+        labels:
+          severity: warning
+          team: mobile
+        annotations:
+          summary: "High mobile app ANR rate"
+          description: "Mobile app ANR rate is {{ $value }} per user per minute"
+
+      - alert: MobileAppLatencyHigh
+        expr: histogram_quantile(0.95, rate(mobile_app_response_time_ms_bucket[5m])) > 3000
+        for: 2m
+        labels:
+          severity: warning
+          team: mobile
+        annotations:
+          summary: "High mobile app latency"
+          description: "95th percentile mobile app response time is {{ $value }}ms"
+
+      # Infrastructure Alerting
+      - alert: HighCPUUsage
+        expr: rate(cpu_usage_total[5m]) > 80
+        for: 5m
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: "High CPU usage"
+          description: "CPU usage is {{ $value }}%"
+
+      - alert: HighMemoryUsage
+        expr: rate(memory_usage_bytes[5m]) / (1024 * 1024 * 1024) > 0.85
+        for: 5m
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: "High memory usage"
+          description: "Memory usage is {{ $value }}%"
+
+      - alert: DiskSpaceLow
+        expr: (node_filesystem_avail_bytes / node_filesystem_size_bytes) * 100 < 15
+        for: 1m
+        labels:
+          severity: critical
+          team: infrastructure
+        annotations:
+          summary: "Low disk space"
+          description: "Only {{ $value }}% disk space remaining"
+
+      - alert: NetworkLatencyHigh
+        expr: rate(network_latency_seconds[5m]) > 1
+        for: 2m
+        labels:
+          severity: warning
+          team: infrastructure
+        annotations:
+          summary: "High network latency"
+          description: "Network latency is {{ $value }} seconds"
+
+      # Business Logic Alerting
+      - alert: ActiveDeliveriesStuck
+        expr: time() - delivery_last_updated_seconds > 3600 AND delivery_status == "on_route"
+        for: 10m
+        labels:
+          severity: warning
+          team: support
+        annotations:
+          summary: "Delivery stuck in transit"
+          description: "Delivery {{ $labels.delivery_id }} has been on route for over 1 hour"
+
+      - alert: DriverOfflineLongPeriod
+        expr: time() - driver_last_location_update_seconds > 1800 AND driver_status == "on_route"
+        for: 5m
+        labels:
+          severity: critical
+          team: support
+        annotations:
+          summary: "Driver offline during delivery"
+          description: "Driver {{ $labels.driver_id }} has been offline for over 30 minutes"
+
+      - alert: LowDriverAvailability
+        expr: count(drivers_available_total) < 5
+        for: 15m
+        labels:
+          severity: warning
+          team: operations
+        annotations:
+          summary: "Low driver availability"
+          description: "Only {{ $value }} drivers available for deliveries"
+
+      # Security Alerting
+      - alert: SuspiciousLoginActivity
+        expr: rate(failed_login_attempts_total[5m]) > 5
+        for: 2m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "Suspicious login activity"
+          description: "High rate of failed login attempts: {{ $value }} per minute"
+
+      - alert: UnusualAPIActivity
+        expr: rate(api_requests_total[1m]) > 100
+        for: 2m
+        labels:
+          severity: warning
+          team: security
+        annotations:
+          summary: "Unusual API activity"
+          description: "Unusually high API request rate: {{ $value }} requests per second"
+
+      - alert: DataExfiltrationRisk
+        expr: rate(large_data_exports_total[5m]) > 0.1
+        for: 1m
+        labels:
+          severity: critical
+          team: security
+        annotations:
+          summary: "Potential data exfiltration"
+          description: "Unusual rate of large data exports detected"
+
+# Notification Channels
+receivers:
+  - name: slack-alerts
+    slack_configs:
+      - api_url: 'https://hooks.slack.com/services/YOUR/SLACK/WEBHOOK'
+        channel: '#alerts'
+        title: 'RealTrack Alert: {{ template "slack.title" .GroupLabels .AlertLabels }}'
+        text: '{{ template "slack.text" .GroupLabels .AlertLabels }}'
+        send_resolved: true
+
+  - name: email-alerts
+    email_configs:
+      - smarthost: smtp.sendgrid.net
+        auth_username: 'apikey'
+        auth_password: 'YOUR_SENDGRID_API_KEY'
+        from: 'alerts@realtrack.app'
+        to: 'ops@realtrack.app'
+        subject: 'RealTrack Alert: {{ template "email.subject" .GroupLabels .AlertLabels }}'
+        html: '{{ template "email.html" .GroupLabels .AlertLabels }}'
+        send_resolved: true
+
+  - name: pagerduty-alerts
+    pagerduty_configs:
+      - service_key: 'YOUR_PAGERDUTY_SERVICE_KEY'
+        severity: 'error'
+        description: '{{ template "pagerduty.description" .GroupLabels .AlertLabels }}'
+        details:
+          firing: '{{ template "pagerduty.description" .GroupLabels .AlertLabels }}'
+          resolved: 'Alert resolved for {{ .GroupLabels.alertname }}'
+
+# Inhibition Rules
+inhibit_rules:
+  - source_match:
+      alertname: 'ApplicationDown'
+    target_match:
+      alertname: 'HighErrorRate'
+    equal: ['job', 'instance']
+    # Don't alert on high error rate if application is down
+
+  - source_match:
+      alertname: 'DatabaseDeadlockDetected'
+    target_match:
+      alertname: 'DatabaseQuerySlow'
+    equal: ['instance']
+    # Don't alert on slow queries if deadlocks are occurring
+
+# Time-based Silencing
+mute_time_intervals:
+  - name: 'maintenance-window'
+    time_intervals:
+      - start_time: '02:00'
+        end_time: '04:00'
+        weekdays: ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']
+    # Mute all non-critical alerts during maintenance windows
